@@ -9,8 +9,6 @@ from os import path as op
 import time
 import warnings
 from scipy import signal, stats
-import openpyxl
-# test
 import pooch
 import pandas as pd
 with warnings.catch_warnings(record=True):
@@ -27,7 +25,7 @@ from mne.preprocessing.nirs import tddr
 import glob
 %matplotlib qt
 
-subjects = ('201 202 203 204 205 206 207 208 209 212 213 214 215 216 217').split()
+subjects = ('201 202 203 204 205 206 207 208 209 212 213 214 215 216 217 218 219').split()
 # Mapping of subjects to groups
 subject_to_group = {
     201: "trained",
@@ -45,6 +43,8 @@ subject_to_group = {
     215: "control",
     216: "trained",
     217: "control",
+    218: "control",
+    219: "trained",
 }
 
 sfreq = 4.807692
@@ -53,7 +53,7 @@ groups = ('trained','control')
 days = ('1', '3')
 runs = (1, 2)
 
-colors = dict(  # https://personal.sron.nl/~pault/data/colourschemes.pdf
+condition_colors = dict(  # https://personal.sron.nl/~pault/data/colourschemes.pdf
     A='#4477AA',  # sblue
     AV='#CCBB44',  # yellow
     V='#EE7733',  # orange
@@ -73,10 +73,10 @@ run_h = True  # regenerate HbO/HbR
 
 n_jobs = 4  # for GLM
 
-raw_path = 'data'
+raw_path = '../../data'
 #behavioral_path = op.join('data', 'NIRx behavioral data.xlsx')
-proc_path = 'processed'
-results_path = 'results'
+proc_path = '../../processed'
+results_path = '../../results'
 subjects_dir = 'subjects'
 os.makedirs(results_path, exist_ok=True)
 os.makedirs(proc_path, exist_ok=True)
@@ -167,7 +167,7 @@ info = use['h'].info
 ###############################################################################
 # Channel example figure
 
-sfreq = 4.807692050933838  # all analysis at this rate
+sfreq = 4.807692  # all analysis at this rate
 
 for subject in subjects:
     for day in days:
@@ -182,9 +182,9 @@ def _make_design(raw_h, design, subject=None, run=None, day=None, group=None):
     annotations_to_remove = raw_h.annotations.description == '255.0'
     raw_h.annotations.delete(annotations_to_remove)
     events, _ = mne.events_from_annotations(raw_h)
-    # mis-codings
     rows_to_remove = events[:, -1] == 1
     events = events[~rows_to_remove]
+    # mis-codings
     if len(events)==101:
         events = events[1:]
 #    if len(events) == 126:
@@ -198,7 +198,7 @@ def _make_design(raw_h, design, subject=None, run=None, day=None, group=None):
     count = np.bincount(events[:, 2])
     assert np.array_equal(count, want), count
     assert events.shape == (100, 3), events.shape
-    # mne.viz.plot_events(events)
+    mne.viz.plot_events(events)
     if design == 'block':
         events = events[0::5]
         duration = 20.
@@ -212,9 +212,9 @@ def _make_design(raw_h, design, subject=None, run=None, day=None, group=None):
         assert (events_r == events_r[:, :1]).all()
         del events_r
     idx = (events[:, [0, 2]] - [0, 1]).T
-    #assert np.in1d(idx[1], np.arange(len(conditions))).all()
+    assert np.in1d(idx[1], np.arange(len(conditions))).all()
     stim[tuple(idx)] = 1
-    #assert raw_h.info['sfreq'] == sfreq  # necessary for below logic to work
+    assert raw_h.info['sfreq'] == sfreq  # necessary for below logic to work
     n_block = int(np.ceil(duration * sfreq))
     stim = signal.fftconvolve(stim, np.ones((n_block, 1)), axes=0)[:n_times]
     dm_events = pd.DataFrame({
@@ -230,52 +230,52 @@ def _make_design(raw_h, design, subject=None, run=None, day=None, group=None):
 ###############################################################################
 # Plot the design matrix and some raw traces
 
-# fig, axes = plt.subplots(2, 1, figsize=(6., 3), constrained_layout=True)
-# # Design
-# ax = axes[0]
-# raw_h = use['h']
-# stim, dm, _ = _make_design(raw_h, design)
-# for ci, condition in enumerate(conditions):
-#     color = colors[condition]
-#     ax.fill_between(
-#         raw_h.times, stim[:, ci], 0, edgecolor='none', facecolor='k',
-#         alpha=0.5)
-#     model = dm[conditions[ci]].to_numpy()
-#     ax.plot(raw_h.times, model, ls='-', lw=1, color=color)
-#     x = raw_h.times[np.where(model > 0)[0][0]]
-#     ax.text(
-#         x + 10, 1.1, condition, color=color, fontweight='bold', ha='center')
-# ax.set(ylabel='Modeled\noxyHb', xlabel='', xlim=raw_h.times[[0, -1]])
+fig, axes = plt.subplots(2, 1, figsize=(6., 3), constrained_layout=True)
+# Design
+ax = axes[0]
+raw_h = use['h']
+stim, dm, _ = _make_design(raw_h, design)
+for ci, condition in enumerate(conditions):
+    color = condition_colors[condition]
+    ax.fill_between(
+        raw_h.times, stim[:, ci], 0, edgecolor='none', facecolor='k',
+        alpha=0.5)
+    model = dm[conditions[ci]].to_numpy()
+    ax.plot(raw_h.times, model, ls='-', lw=1, color=color)
+    x = raw_h.times[np.where(model > 0)[0][0]]
+    ax.text(
+        x + 10, 1.1, condition, color=color, fontweight='bold', ha='center')
+ax.set(ylabel='Modeled\noxyHb', xlabel='', xlim=raw_h.times[[0, -1]])
 
-# # HbO/HbR
-# ax = axes[1]
-# picks = [pi for pi, ch_name in enumerate(raw_h.ch_names)
-#          if 'S4_D4' in ch_name]
-# #assert len(picks) == 2
-# colors = dict(hbo='r', hbr='b')
-# ylim = np.array([-0.5, 0.5])
-# for pi, pick in enumerate(picks):
-#     color = colors[raw_h.ch_names[pick][-3:]]
-#     data = raw_h.get_data(pick)[0] * 1e6
-#     val = np.ptp(data)
-#     assert val > 0.01
-#     ax.plot(raw_h.times, data, color=color, lw=1.)
-# ax.set(ylim=ylim, xlabel='Time (s)', ylabel='μM',
-#        xlim=raw_h.times[[0, -1]])
-# del raw_h
-# for ax in axes:
-#     for key in ('top', 'right'):
-#         ax.spines[key].set_visible(False)
-# for ext in ('png', 'svg'):
-#     fig.savefig(
-#         op.join(
-#             results_path, f'figure_1_{exp_name}.{ext}'))
+# HbO/HbR
+ax = axes[1]
+picks = [pi for pi, ch_name in enumerate(raw_h.ch_names)
+         if 'S1_D2' in ch_name]
+assert len(picks) == 2
+fnirs_colors = dict(hbo='r', hbr='b')
+ylim = np.array([-0.5, 0.5])
+for pi, pick in enumerate(picks):
+    color = fnirs_colors[raw_h.ch_names[pick][-3:]]
+    data = raw_h.get_data(pick)[0] * 1e6
+    val = np.ptp(data)
+    assert val > 0.01
+    ax.plot(raw_h.times, data, color=color, lw=1.)
+ax.set(ylim=ylim, xlabel='Time (s)', ylabel='μM',
+       xlim=raw_h.times[[0, -1]])
+del raw_h
+for ax in axes:
+    for key in ('top', 'right'):
+        ax.spines[key].set_visible(False)
+for ext in ('png', 'svg'):
+    fig.savefig(
+        op.join(
+            results_path, f'figure_1_{exp_name}.{ext}'))
 
 
 ###############################################################################
 # Run GLM analysis and epoching
 
-#days = ('1', '3')
+sfreq = 4.807692050933838
 
 df_cha = pd.DataFrame()
 for day in days:
@@ -305,7 +305,7 @@ for day in days:
             print(f'{time.time() - t0:0.1f} sec')
         df_cha = pd.concat([df_cha, pd.read_hdf(fname)], ignore_index=True)
 df_cha.reset_index(drop=True, inplace=True)
-df_cha.to_csv('df_cha.csv', index=False)
+#df_cha.to_csv(op.join(results_path, 'df_cha.csv'), index=False)
 
 # block averages
 event_id = {condition: ci for ci, condition in enumerate(conditions, 1)}
@@ -323,7 +323,7 @@ for day in days:
             raws = list()
             events = list()
             for run in runs:
-                fname2 = op.join(proc_path, f'{group}_{subject}_{day}_{run:03d}_hbo_raw.fif')
+                fname2 = op.join(proc_path, f'{subject}_{day}_{run:03d}_hbo_raw.fif')
                 raw_h = mne.io.read_raw_fif(fname2)
                 events.append(_make_design(raw_h, 'block', subject, run)[2])
                 raws.append(raw_h)
@@ -346,11 +346,11 @@ for day in days:
     for subject in subjects:
         for run in runs:
             group = subject_to_group.get(int(subject), "unknown")
-            fname2 = op.join(proc_path, f'{group}_{subject}_{day}_{run:03d}_hbo_raw.fif')
+            fname2 = op.join(proc_path, f'{subject}_{day}_{run:03d}_hbo_raw.fif')
             this_info = mne.io.read_info(fname2)
             bad[(subject, run, day)] = sorted(
                 this_info['ch_names'].index(bad) for bad in this_info['bads'])
-#        assert np.in1d(bad[(subject, run, day)], np.arange(len(use['h'].ch_names))).all()  # noqa: E501
+        assert np.in1d(bad[(subject, run, day)], np.arange(len(use['h'].ch_names))).all()  # noqa: E501
 
 # make life easier by combining across runs
 bad_combo = dict()
@@ -385,7 +385,7 @@ assert n_drop == start - end, (n_drop, start - end)
 sorts = ['subject', 'ch_name', 'Chroma', 'Condition', 'group', 'day', 'run']
 df_cha.sort_values(
     sorts, inplace=True)
-#assert (np.array(df_cha['run']).reshape(-1, 2) == runs).all()
+assert (np.array(df_cha['run']).reshape(-1, 2) == runs).all()
 theta = np.array(df_cha['theta']).reshape(-1, len(runs)).mean(-1)
 df_cha.drop(
     [col for col in df_cha.columns if col not in sorts[:-1]], axis='columns',
@@ -394,35 +394,8 @@ df_cha.reset_index(drop=True, inplace=True)
 df_cha = df_cha[::len(runs)]
 df_cha.reset_index(drop=True, inplace=True)
 df_cha['theta'] = theta
-df_cha.to_csv('df_cha.csv', index=False)
+df_cha.to_csv(op.join(results_path, 'df_cha.csv'), index=False)
 
-##############################################
-# Subtract day 3 from day 1
-#df_day1 = df_cha[df_cha['day'] == '1']
-#df_day3 = df_cha[df_cha['day'] == '3']
-#df_day1.sort_values(sorts[:-1], inplace=True)
-#df_day3.sort_values(sorts[:-1], inplace=True)
-#df_day1.reset_index(drop=True, inplace=True)
-#df_day3.reset_index(drop=True, inplace=True)
-#df_diff = df_day1.copy()
-#df_diff['theta'] = df_day3['theta'] - df_day1['theta']
-#df_diff.to_csv('df_diff.csv', index=False)
-#df_cha = df_diff.copy()
-
-##############################################
-#conditions = ('A', 'V', 'AV')
-# Conduct a mixed-design ANOVA
-import statsmodels.api as sm
-from statsmodels.regression.mixed_linear_model import MixedLM
-import pingouin as pg
-from statsmodels.formula.api import ols
-
-# Mixed ANOVA
-def _mixed_anova(ch_summary):
-    model = ols("""theta ~ ch_name:group + ch_name:day + ch_name:group:day""", 
-                data=ch_summary).fit()
-    ch_model_df = sm.stats.anova_lm(model, typ=2)
-    return ch_model_df
 
 ##############################################
 # Mixed linear model
@@ -442,28 +415,15 @@ ch_summary = df_cha.query("Chroma in ['hbo']").copy()
 ch_summary_use = df_cha.query(
     f"Chroma in ['hbo'] and subject in {use_subjects}").copy()
 
-# ANOVA MULTIPLE CORRECTIONS
-#ch_model_anova = _mixed_anova(ch_summary_use)
-#ch_model_anova.reset_index(inplace=True)
-#import statsmodels
-#last_row = ch_model_anova.iloc[-1]
-#print(last_row)
-#ch_model_anova = ch_model_anova[:-1]
-#print(f'Correcting for {len(ch_model_anova["PR(>F)"])} comparisons using FDR')
-#_, ch_model_anova['P_fdr'], _, _ = statsmodels.stats.multitest.multipletests(ch_model_df2["PR(>F)"], alpha=0.05, method='fdr_bh', maxiter=1, is_sorted=False, returnsorted=True)
-#print(ch_model_anova)
-#ch_model_anova.to_csv('ch_model_anova_corrected.csv', index=False)
-
-# LINEAR MULTIPLE CORRECTIONS
+# Correct for multiple comparisons
 ch_model_df = _mixed_df(ch_summary_use) 
 ch_model_df.reset_index(inplace=True)
 print(f'Correcting for {len(ch_model_df["P>|z|"])} comparisons using FDR')
 _, ch_model_df['P_fdr'] = mne.stats.fdr_correction(
     ch_model_df['P>|z|'], method='indep')
 ch_model_df['SIG'] = ch_model_df['P_fdr'] < 0.05
-print(ch_model_df)
-ch_model_df.to_csv('ch_model_linear_corrected.csv', index=False)
-
+ch_model_df.to_csv(op.join(results_path, 'ch_model_linear_corrected.csv'), index=False)
+ch_model_df.loc[ch_model_df.SIG == True]
 
 
 sig_chs = dict()
@@ -480,9 +440,8 @@ for condition in conditions:
         ch_model_df.loc[(ch_model_df['Condition'] == condition) & 
                         (ch_model_df['ch_name'] == ch_name), 'z'].iloc[0]
         for ch_name in info['ch_names'][::2]], float)
-    #assert zs[condition].shape == (42,)
+    assert zs[condition].shape == (84,)
     assert np.isfinite(zs[condition]).all()
-zs[condition].shape
 
 def _plot_sig_chs(sigs, ax):
     if sigs and isinstance(sigs[0], tuple):
@@ -596,6 +555,10 @@ for ext in ('png', 'svg'):
 
 ###############################################################################
 # Source space projection
+
+import pyvista
+import pyvistaqt
+
 info = use['h'].copy().pick_types(fnirs='hbo', exclude=()).info
 info['bads'] = []
 assert tuple(zs) == conditions
@@ -613,57 +576,34 @@ evoked.copy().rename_channels(num_map).plot_sensors(show_names=True)
 view_map = [np.arange(19), np.arange(19, 33), np.arange(33, 52)]
 surf = mne.read_bem_surfaces(  # brain surface
     f'{subjects_dir}/fsaverage/bem/fsaverage-5120-5120-5120-bem.fif', s_id=1)
+
 for ci, condition in enumerate(conditions):
-    for day in days:
-        this_sig = [v[0] // 2 for v in sig_chs[condition]]
-        #assert np.in1d(this_sig, np.arange(52)).all()
-        pos = np.array([info['chs'][idx]['loc'][:3] for idx in this_sig])
-        pos.shape = (-1, 3)  # can be empty
-        trans = mne.transforms._get_trans('fsaverage', 'head', 'mri')[0]
-        pos = mne.transforms.apply_trans(trans, pos)  # now in MRI coords
-        pos = mne.surface._project_onto_surface(pos, surf, project_rrs=True)[2]
-        # plot
-        brain = stc.plot(hemi='both', views=['lat', 'frontal', 'lat'],
-                        initial_time=evoked.times[ci], cortex='low_contrast',
-                        time_viewer=False, show_traces=False,
-                        surface='pial', smoothing_steps=0, size=(1200, 400),
-                        clim=dict(kind='value', pos_lims=[0., 1.25, 2.5]),
-                        colormap='RdBu_r', view_layout='horizontal',
-                        colorbar=(0, 1), time_label='', background='w',
-                        brain_kwargs=dict(units='m'),
-                        add_data_kwargs=dict(colorbar_kwargs=dict(
-                            title_font_size=24, label_font_size=24, n_labels=5,
-                            title='z score')), subjects_dir=subjects_dir)
-        brain.show_view('lat', hemi='lh', row=0, col=0)
-        brain.show_view(azimuth=270, elevation=90, row=0, col=1)
-        # significant channel white text overlay
-        pl = brain.plotter
-        used = np.zeros(len(this_sig))
-        for vi in range(3):
-            this_idx = np.where(np.in1d(this_sig, view_map[vi]))[0]
-            assert not used[this_idx].any()
-            used[this_idx] = True
-            pl.subplot(0, vi)
-            vp = pl.renderer  # subclass of vtkViewport
-            for idx in this_idx:
-                ch_pos = pos[idx]
-                vp.SetWorldPoint(np.r_[ch_pos, 1.])
-                vp.WorldToDisplay()
-                ch_pos = (np.array(vp.GetDisplayPoint()[:2]) -
-                        np.array(vp.GetOrigin()))
-                actor = pl.add_text(
-                    str(this_sig[idx] + 1), ch_pos,
-                    font_size=12, color=(1., 1., 1.))
-                prop = actor.GetTextProperty()
-                prop.SetVerticalJustificationToCentered()
-                prop.SetJustificationToCentered()
-                actor.SetTextProperty(prop)
-                prop.SetBold(True)
-        #assert used.all()
-        brain.show_view('lat', hemi='rh', row=0, col=2)
-        plt.imsave(
-            op.join(results_path, f'brain_{exp_name}_{condition}_{day}.png'), pl.image)
-        brain.close()
+    this_sig = [v[0] // 2 for v in sig_chs[condition]]
+    #assert np.in1d(this_sig, np.arange(52)).all()
+    pos = np.array([info['chs'][idx]['loc'][:3] for idx in this_sig])
+    pos.shape = (-1, 3)  # can be empty
+    trans = mne.transforms._get_trans('fsaverage', 'head', 'mri')[0]
+    pos = mne.transforms.apply_trans(trans, pos)  # now in MRI coords
+    pos = mne.surface._project_onto_surface(pos, surf, project_rrs=True)[2]
+    # plot
+    brain = stc.plot(hemi='both', views=['lat', 'frontal', 'lat'],
+                    initial_time=evoked.times[ci], cortex='low_contrast',
+                    time_viewer=False, show_traces=False,
+                    surface='pial', smoothing_steps=0, size=(1200, 400),
+                    clim=dict(kind='value', pos_lims=[0., 1.25, 2.5]),
+                    colormap='RdBu_r', view_layout='horizontal',
+                    colorbar=(0, 1), time_label='', background='w',
+                    brain_kwargs=dict(units='m'),
+                    add_data_kwargs=dict(colorbar_kwargs=dict(
+                        title_font_size=24, label_font_size=24, n_labels=5,
+                        title='z score')), subjects_dir=subjects_dir)
+    brain.show_view('lat', hemi='lh', row=0, col=0)
+    brain.show_view(azimuth=270, elevation=90, row=0, col=1)
+    pl = brain.plotter
+    used = np.zeros(len(this_sig))
+    brain.show_view('lat', hemi='rh', row=0, col=2)
+    plt.imsave(
+        op.join(results_path, f'brain_{exp_name}_{condition}.png'), pl.image)
 
 # fOLD specificity
 fold_files = ['10-10.xls', '10-5.xls']
@@ -683,3 +623,35 @@ specs.sort_values(['Channel', 'negspec'], inplace=True)
 specs.drop('negspec', axis=1, inplace=True)
 specs.reset_index(inplace=True, drop=True)
 specs.to_csv(op.join(results_path, 'specificity.csv'), index=False)
+
+
+
+
+
+
+##############################################
+#conditions = ('A', 'V', 'AV')
+# Conduct a mixed-design ANOVA
+#import statsmodels.api as sm
+#from statsmodels.regression.mixed_linear_model import MixedLM
+#import pingouin as pg
+#from statsmodels.formula.api import ols
+
+# Mixed ANOVA
+#def _mixed_anova(ch_summary):
+#    model = ols("""theta ~ ch_name:group + ch_name:day + ch_name:group:day""", 
+#                data=ch_summary).fit()
+#    ch_model_df = sm.stats.anova_lm(model, typ=2)
+#    return ch_model_df
+
+# Anova Multiple Comparisons
+#ch_model_anova = _mixed_anova(ch_summary_use)
+#ch_model_anova.reset_index(inplace=True)
+#import statsmodels
+#last_row = ch_model_anova.iloc[-1]
+#print(last_row)
+#ch_model_anova = ch_model_anova[:-1]
+#print(f'Correcting for {len(ch_model_anova["PR(>F)"])} comparisons using FDR')
+#_, ch_model_anova['P_fdr'], _, _ = statsmodels.stats.multitest.multipletests(ch_model_df2["PR(>F)"], alpha=0.05, method='fdr_bh', maxiter=1, is_sorted=False, returnsorted=True)
+#print(ch_model_anova)
+#ch_model_anova.to_csv('ch_model_anova_corrected.csv', index=False)
