@@ -1,0 +1,90 @@
+---
+title: "fNIRS_Analysis"
+author: "AJK"
+date: '2024-01-30'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(dplyr)
+
+df_cha <- read.csv("PycharmProjects/fnirs-analysis/df_cha.csv")
+
+df_cha_conditions <- df_cha %>%
+  filter(Condition %in% c("A","V","AV"))
+
+res.aov <- anova_test(
+  data = df_cha_conditions, dv = theta, wid = subject,
+  within = c(day, Condition), between = c(group)
+  )
+get_anova_table(res.aov)
+
+selected_rows <- df_cha %>%
+  filter(ch_name == "S17_D13 hbo" & Condition %in% c("A")) %>%
+  filter(ch_name == "S19_D8 hbo" & Condition %in% c("A")) %>%
+  filter(ch_name == "S10_D22 hbo" & Condition %in% c("AV")) %>%
+  filter(ch_name == "S11_D19 hbo" & Condition %in% c("AV")) %>%
+  filter(ch_name == "S14_D26 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S15_D14 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S16_D26 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S16_D27 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S18_D27 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S23_D12 hbo" & Condition %in% c("V")) %>%
+  filter(ch_name == "S3_D6 hbo" & Condition %in% c("V"))
+
+#Written: S14_D26 hbo, S17_D13 hbo
+
+selected_rows %>%
+  group_by(day, group, condition) %>%
+  get_summary_stats(theta, type = "mean_sd")
+
+res.aov <- anova_test(
+  data = selected_rows, dv = theta, wid = subject,
+  within = c(day, condition), between = c(group)
+  )
+get_anova_table(res.aov)
+
+bxp <- ggboxplot(selected_rows, x = "day", y = "theta",
+  add = "jitter", 
+  facet.by = "group") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  labs(title="ch53 - Auditory") +
+  ylim(-1e-07,4e-07)
+bxp
+
+
+bxp <- ggboxplot(df_cha_conditions, x = "day", y = "theta", 
+                 color="ch_name",
+                 add = "jitter", 
+                 facet.by = "group") +
+  theme(legend.position = "None") +
+  geom_hline(yintercept = 0, linetype = 3) 
+bxp
+
+
+
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
