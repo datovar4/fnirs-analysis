@@ -1,0 +1,568 @@
+---
+title: "fNIRS_Analysis"
+author: "AJK"
+date: '2024-01-30'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(dplyr)
+library(lme4)
+
+setwd("~/PycharmProjects/fnirs-analysis/results")
+df_cha <- read.csv("df_cha.csv") 
+df_cha$day <- factor(df_cha$day)
+df_cha$subject <- factor(df_cha$subject)
+
+# Filter for only hbo and A/V/AV conditions
+df_cha_hbo_AVAV_raw <- df_cha %>%
+  filter(Chroma %in% "hbo" & Condition %in% c("A", "V", "AV"))
+
+# Remove outliers
+z_scores <- scale(df_cha_hbo_AVAV_raw$theta)
+z_threshold <- 2
+df_cha_hbo_AVAV <- df_cha_hbo_AVAV_raw[abs(z_scores) <= z_threshold, ]
+
+```
+
+```{r ANOVA, include=FALSE}
+# Verify mixed linear modeling effects
+library(lmerTest)
+model <- lmer(theta ~ ch_name * Condition + (1 | subject), data = df_cha)
+summary(model)
+# Multiple comparisons correction
+p_values <- summary(model)$coefficients[, "Pr(>|t|)"]
+adjusted_p_values <- p.adjust(p_values, method = "fdr")
+result <- cbind(Original_PValue = p_values, Adjusted_PValue = adjusted_p_values)
+significant_rows <- result[result[, "Adjusted_PValue"] < 0.05, ]
+# none of the channels pass FDR correction, but they do with MNE... rip...
+
+
+# Let's try again with ANOVA! 
+# I think this is more appropriate anyway since channels and conditions are categorical?
+res.aov <- anova_test(
+  data = df_cha, dv = theta, wid = subject,
+  within = c(day, Condition, ch_name), between = c(group))
+anova_table <- get_anova_table(res.aov)
+# Multiple comparisons correction
+p_values <- anova_table[["p"]]
+adjusted_p_values <- p.adjust(p_values, method = "fdr")
+anova_table$adjusted_pval <- adjusted_p_values
+significant_rows <- anova_table[anova_table$adjusted_pval < 0.05, ]
+print(significant_rows)
+#Sig effects of: ch_name, group:ch_name, Condition:ch_name, day:Condition:ch_name
+
+
+# Only look at A, AV, and V conditions, HbO channels, and outliers > 95% CI removed
+res.aov <- anova_test(
+  data = df_cha_AVAV, dv = theta, wid = subject,
+  within = c(day, Condition, ch_name), between = c(group))
+anova_table <- get_anova_table(res.aov)
+print(anova_table)
+# Multiple comparisons correction
+p_values <- anova_table[["p"]]
+adjusted_p_values <- p.adjust(p_values, method = "fdr")
+anova_table$adjusted_pval <- adjusted_p_values
+significant_rows <- anova_table[anova_table$adjusted_pval < 0.05, ]
+print(significant_rows)
+#Sig effects of: Condition, ch_name, Condition:ch_name
+
+
+```
+
+
+### Only the significant channels?
+
+```{r, echo=FALSE}
+
+# pool sig A, V, AV channels
+sig_chs <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S17_D13 hbo", 
+                        "S19_D8 hbo", 
+                        "S10_D22 hbo", 
+                        "S11_D19 hbo", 
+                        "S13_D24 hbo",
+                        "S14_D26 hbo", 
+                        "S15_D14 hbo", 
+                        "S16_D26 hbo", 
+                        "S16_D27 hbo", 
+                        "S18_D27 hbo", 
+                        "S23_D12 hbo", 
+                        "S3_D6 hbo")  & Condition %in% c("A", "V", "AV"))
+
+res.aov <- anova_test(
+  data = sig_chs, dv = theta, wid = subject,
+  within = c(day, Condition, ch_name), between = c(group))
+get_anova_table(res.aov)
+
+#channel*group (p=0.034), 
+#channel*Condition (p=0.044)
+#channel*Condition*day (p=0.015)
+
+
+```
+
+
+
+
+### Individual Channel Analysis: Auditory
+
+```{r}
+#### Channel 53 - Auditory
+
+ch53_A <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S17_D13 hbo") & Condition %in% c("A"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch53_A, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+# p = 0.040 for group:day
+
+# Paired T-Test Within Groups
+
+ch53_A_t <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S17_D13 hbo") & Condition %in% c("A") & group %in% c("trained"))
+df_wide <- tidyr::pivot_wider(ch53_A_t, names_from = day, values_from = theta)
+paired_t_test <- t.test(df_wide$`1`, df_wide$`3`, paired = TRUE)
+print(paired_t_test)
+# p = 0.08328 for trained
+ch53_A_c <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S17_D13 hbo") & Condition %in% c("A") & group %in% c("control"))
+df_wide <- tidyr::pivot_wider(ch53_A_c, names_from = day, values_from = theta)
+paired_t_test <- t.test(df_wide$`1`, df_wide$`3`, paired = TRUE)
+print(paired_t_test)
+# p = 0.3915 for control
+
+# Plot
+ggplot(ch53_A, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch53 - Auditory") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+#### Channel 60 - Auditory
+ch60_A <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S19_D8 hbo") & Condition %in% c("A"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch60_A, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+# Plot
+ggplot(ch60_A, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch60 - Auditory") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+```
+
+
+
+
+### Individual Channel Analysis: Audiovisual
+
+```{r}
+#### Channel 32 - Audiovisual
+ch32_AV <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S11_D19 hbo") & Condition %in% c("AV"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch32_AV, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+# Plot
+ggplot(ch32_AV,  aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch32 - Audiovisual") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+#### Channel 31 - Audiovisual
+ch31_AV <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S10_D22 hbo") & Condition %in% c("AV"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch31_AV, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+# Plot
+ggplot(ch31_AV, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch31 - Audiovisual") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+#### Channel 41 - Audiovisual
+ch41_AV <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S13_D24 hbo") & Condition %in% c("AV"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch41_AV, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+# Plot
+ggplot(ch41_AV, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch41 - Audiovisual") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+
+```
+
+
+
+
+
+
+
+
+### Individual Channel Analysis: Visual
+
+```{r}
+#### Channel 9 - Visual
+ch9_V <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S3_D6 hbo") & Condition %in% c("V"))
+# ANOVA
+res.aov <- anova_test(
+  data = ch9_V, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+
+#### Channel 74 - Visual
+ch74_V <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S23_D12 hbo") & Condition %in% c("V"))
+
+# ANOVA
+res.aov <- anova_test(
+  data = ch74_V, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+
+### Remaining VO channels
+VO_channels <- df_cha_hbo_AVAV %>%
+  filter(ch_name %in% c("S14_D26 hbo", "S15_D14 hbo", "S16_D26 hbo", "S16_D27 hbo", "S18_D27 hbo", "S23_D12 hbo", "S3_D6 hbo") & Condition %in% c("V"))
+
+res.aov <- anova_test(
+  data = VO_channels, dv = theta, wid = subject,
+  within = c(day, ch_name), between = c(group))
+get_anova_table(res.aov)
+
+VO_channels1 <- df_cha_hbo_AVAV %>%
+           filter(ch_name %in% c("S14_D26 hbo", 
+                        "S15_D14 hbo", 
+                        "S16_D26 hbo")  & 
+                    Condition %in% c("V"))
+
+VO_channels2 <- df_cha_hbo_AVAV %>%
+           filter(ch_name %in% c(
+                        "S18_D27 hbo", 
+                        "S23_D12 hbo", 
+                        "S16_D27 hbo")  & 
+                    Condition %in% c("V"))
+
+
+# Plot
+ggplot(ch9_V, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1.5) +
+  facet_wrap(~group) +
+  labs(title = "Ch9 - Visual") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+# Plot
+ggplot(ch74_V, aes(x=day, y=theta)) +
+  geom_point() +
+  geom_boxplot() +
+  facet_grid(ch_name ~ group, scales = 'free') +
+  geom_line(aes(group=subject, color=subject)) +
+  labs(title = "Ch74 - Visual") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+
+
+
+  geom_hline(yintercept = 0, linetype = 3) +
+
+
+# Plot
+ggplot(VO_channels1, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  facet_grid(ch_name ~ group, scales = 'free') +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1) +
+  labs(title = "") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+ggplot(VO_channels2, aes(x=day, y=theta)) +
+  geom_boxplot() +
+  facet_grid(ch_name ~ group, scales = 'free') +
+  geom_line(aes(group=subject, color=subject, alpha=0.8), 
+            linewidth=1) +
+  labs(title = "") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        ) +
+   guides(alpha = "none") 
+
+
+
+
+```
+
+
+
+
+
+### More Plots
+
+```{r, echo=FALSE}
+
+# Day x Condition x Channel ########
+bxp <- ggboxplot(sig_chs, x = "day", y = "theta", 
+                 color="Condition",
+                 add = "jitter", 
+                 facet.by = "ch_name",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+#  theme(legend.position = "None") +
+  ylim(-2e-07,2e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+# Group x Condition x Channel ########
+bxp <- ggboxplot(sig_chs, x = "group", y = "theta", 
+                 color="Condition",
+                 add = "jitter", 
+                 facet.by = "ch_name",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+#  theme(legend.position = "None") +
+  ylim(-2e-07,2e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+
+# Group x Channel ##########
+bxp <- ggboxplot(sig_chs, x = "group", y = "theta", 
+                 add = "jitter", 
+                 facet.by = "ch_name",
+                 add.params = list(size = 1, alpha = 0.5, color="Condition"),  
+                 ) +
+#  theme(legend.position = "None") +
+  ylim(-2e-07,2.5e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+# Condition x Channel ##########
+bxp <- ggboxplot(sig_chs, x = "Condition", y = "theta", 
+                 color = "Condition",
+                 add = "jitter", 
+                 facet.by = "ch_name",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+#  theme(legend.position = "None") +
+  ylim(-2e-07,2e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+
+# Not Significant:
+# Day x Group
+bxp <- ggboxplot(sig_chs, x = "day", y = "theta",
+  add = "jitter", 
+  facet.by = "group") +
+  geom_hline(yintercept = 0, linetype = 3) +
+  labs(title="Sig Chs") +
+  ylim(-4e-07,1e-07)
+bxp
+# Day x Group x Condition
+bxp <- ggboxplot(sig_chs, x = "day", y = "theta", 
+                 color="Condition",
+                 add = "jitter", 
+                 facet.by = "group",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+#  theme(legend.position = "None") +
+  ylim(-5e-07,5e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+```
+
+
+## Individual channel Paired t-tests
+
+```{r, echo=FALSE}
+A_rows <- df_cha %>%
+  filter(ch_name %in% c("S17_D13 hbo", "S19_D8 hbo") & Condition %in% c("A"))
+AV_rows <- df_cha %>%
+  filter(ch_name %in% c("S10_D22 hbo", "S11_D19 hbo", "S13_D24 hbo") & Condition %in% c("AV"))
+V_rows <- df_cha %>%
+  filter(ch_name %in% c("S14_D26 hbo", "S15_D14 hbo", "S16_D26 hbo", "S16_D27 hbo", "S18_D27 hbo", "S23_D12 hbo", "S3_D6 hbo") & Condition %in% c("V"))
+
+
+ch60 <- df_cha %>%
+  filter(ch_name %in% c("S19_D8 hbo"))
+ch60_A <- df_cha %>%
+  filter(ch_name %in% c("S19_D8 hbo") & Condition %in% c("A"))
+ch60_A2 <- ch60_A[, c("subject", "day", "theta", "group")]
+ch60_A2 <- ch60_A2 %>%
+  filter(group %in% c("trained"))
+ch60_A3 <- ch60_A2 %>%
+  pivot_wider(
+    id_cols = subject,
+    names_from = day,
+    values_from = theta,
+    names_prefix = "day"
+  )                
+t.test(ch60_A3$day1, ch60_A3$day3, paired = TRUE, alternative = "two.sided")
+
+res.aov <- anova_test(
+  data = ch60_A, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+
+bxp <- ggboxplot(ch60_A, x = "day", y = "theta", 
+                 add = "jitter", 
+                 facet.by = "group",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+  labs(title = "Ch60 - Auditory") +
+  ylim(-1e-06,1e-06) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+
+ggplot(ch60_A, aes(x=day, y=theta)) +
+  geom_point() +
+  geom_boxplot() +
+  facet_wrap(~group) +
+  geom_line(aes(group=subject, color=subject)) +
+  labs(title = "Ch60 - Auditory") +
+#  ylim(-1e-06,1e-06) +
+  geom_hline(yintercept = 0, linetype = 3)
+
+
+ggplot(ch53_A, aes(x=day, y=theta)) +
+  geom_point() +
+  geom_boxplot() +
+  facet_wrap(~group) +
+  geom_line(aes(group=subject, color=subject)) +
+  labs(title = "Ch53 - Auditory") +
+#  ylim(-1e-06,1e-06) +
+  geom_hline(yintercept = 0, linetype = 3)
+
+
+ch53_A <- df_cha %>%
+  filter(ch_name %in% c("S17_D13 hbo") & Condition %in% c("A"))
+res.aov <- anova_test(
+  data = ch53_A, dv = theta, wid = subject,
+  within = c(day, Condition), between = c(group))
+get_anova_table(res.aov)
+
+res.aov <- anova_test(
+  data = ch53_A, dv = theta, wid = subject,
+  within = c(day), between = c(group))
+get_anova_table(res.aov)
+
+bxp <- ggboxplot(ch60_A, x = "day", y = "theta", 
+                 add = "jitter", 
+                 facet.by = "group",
+                 add.params = list(size = 1, alpha = 0.5),  
+                 ) +
+  labs(title = "Ch53 - Auditory") +
+  ylim(-5e-07,5e-07) +
+  geom_hline(yintercept = 0, linetype = 3)
+bxp
+
+
+```
